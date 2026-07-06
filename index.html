@@ -130,43 +130,85 @@ canvas{width:100%;height:100%}
 </div>
 
 <script>
-/* ============ SERVER-DRIVEN FRONTEND ============ */
-/* State comes from GET /api/state (Flask -> simulator; production: BigQuery). */
-let S=null;
-function fmt(n,d=1){return Number(n).toFixed(d)}
+/* ============ SIMULATED CITY GRID (stands in for BigQuery + SCADA feed) ============ */
+const FEEDERS=[
+ {id:'F1',name:'Feeder 1 · Old City',load:12,cap:20,temp:52,status:'OK'},
+ {id:'F2',name:'Feeder 2 · Fatehpura',load:14,cap:20,temp:55,status:'OK'},
+ {id:'F3',name:'Feeder 3 · Sector 14',load:11,cap:18,temp:49,status:'OK'},
+ {id:'F4',name:'Feeder 4 · Sukher Ind.',load:16.5,cap:18,temp:74,status:'WARN'},   // overheating transformer
+ {id:'F5',name:'Feeder 5 · Hiranmagri',load:13,cap:20,temp:53,status:'OK'},
+ {id:'F6',name:'Feeder 6 · Pratap Nagar',load:12.5,cap:20,temp:51,status:'OK'},
+ {id:'F7',name:'Feeder 7 · Ambamata',load:0,cap:16,temp:41,status:'TRIP'},          // tripped feeder
+ {id:'F8',name:'Feeder 8 · Bhuwana',load:10,cap:18,temp:48,status:'OK'}
+];
+const STATE={t:0,water:68,waterTrend:-0.4,ambient:43,history:[],alarms:[],f7Trips:[
+ {when:'Mon 29 Jun 17:42',cause:'Over-current (O/C) relay pickup · 118% of rated',dur:'22 min'},
+ {when:'Wed 01 Jul 18:05',cause:'Over-current (O/C) relay pickup · 124% of rated',dur:'31 min'},
+ {when:'Today 12:14',cause:'Earth-fault (E/F) — suspected cable insulation degradation, span P-114 to P-117',dur:'ongoing'}
+]};
+const SOP={ // stands in for RAG over O&M manuals / SOPs (Vertex AI Search in production)
+ 'O/C':'SOP-EL-07: 1) Confirm relay flag & DR record 2) Patrol line for visible fault 3) Single test-charge attempt permitted after patrol 4) If holds, restore in load blocks of ≤30%; if re-trips, isolate section & escalate to AE.',
+ 'E/F':'SOP-EL-09: Earth fault — do NOT re-energise before megger test of suspect span. Isolate section, apply PTW, megger both directions, replace/repair failed span, backfeed healthy sections via ring main.',
+ 'XFMR-TEMP':'SOP-TR-03: Oil temp >70°C — verify cooling fans/pumps ON, check oil level & silica gel, reduce load 20% if >75°C, trip & isolate at 85°C. Log in transformer health register.',
+ 'WATER-LOW':'SOP-WS-02: Reservoir <50% — activate secondary pumping from Fateh Sagar intake, issue conservation advisory via city app, prioritise hospital/essential zones.'
+};
+function totalLoad(){return FEEDERS.reduce((s,f)=>s+f.load,0)}
+function fmt(n,d=1){return n.toFixed(d)}
+function now(){return new Date().toLocaleTimeString('en-IN',{hour12:false})}
+
+function pushAlarm(sev,src,text){
+ STATE.alarms.unshift({t:now(),sev,src,text});
+ if(STATE.alarms.length>40)STATE.alarms.pop();
+ renderAlarms();
+}
 function renderAlarms(){
  const el=document.getElementById('alarmList');
- el.innerHTML=S.alarms.map(a=>`<div class="alarm ${a.sev}"><span class="t">${a.t}</span><span class="sev">${a.sev.toUpperCase()}</span><span><b style="color:var(--txt)">${a.src}</b> — ${a.text}</span></div>`).join('');
- document.getElementById('alarmCount').textContent=S.alarms.length+' EVENTS';
- document.getElementById('kAlarm').textContent=S.alarms.filter(a=>a.sev!=='info').length;
- const c=S.alarms.filter(a=>a.sev==='crit').length;
- const t=document.getElementById('kAlarmT');
- t.textContent=c?c+' critical':'no critical'; t.style.color=c?'var(--red)':'var(--green)';
+ el.innerHTML=STATE.alarms.map(a=>`<div class="alarm ${a.sev}"><span class="t">${a.t}</span><span class="sev">${a.sev.toUpperCase()}</span><span><b style="color:var(--txt)">${a.src}</b> — ${a.text}</span></div>`).join('');
+ document.getElementById('alarmCount').textContent=STATE.alarms.length+' EVENTS';
+ document.getElementById('kAlarm').textContent=STATE.alarms.filter(a=>a.sev!=='info').length;
+ const c=STATE.alarms.filter(a=>a.sev==='crit').length;
+ document.getElementById('kAlarmT').textContent=c?c+' critical':'no critical';
+ document.getElementById('kAlarmT').style.color=c?'var(--red)':'var(--green)';
 }
-function render(){
- if(!S)return;
- document.getElementById('kLoad').innerHTML=fmt(S.total_load)+'<small> MW</small>';
- document.getElementById('kLoadT').textContent='▲ demand rising · ambient '+S.ambient+'°C';
- const online=S.feeders.filter(f=>f.status!=='TRIP').length;
+
+/* ---- tick: evolve the simulation ---- */
+function tick(){
+ STATE.t++;
+ FEEDERS.forEach(f=>{
+  if(f.status==='TRIP'){f.load=0;return}
+  f.load=Math.max(4,f.load+(Math.random()-0.48)*0.5);
+  if(f.id==='F4'){f.temp=Math.min(86,f.temp+Math.random()*0.35); if(f.temp>78&&f.status!=='CRIT'){f.status='CRIT';pushAlarm('crit','XFMR T-4 Sukher','Oil temperature '+fmt(f.temp)+'°C — exceeds 78°C threshold. AI: failure risk HIGH within 6h at current load.')}}
+  else f.temp=Math.max(45,f.temp+(Math.random()-0.5)*0.6);
+  if(f.load/f.cap>0.92&&Math.random()<0.15)pushAlarm('warn',f.name,'Loading at '+fmt(f.load/f.cap*100,0)+'% of capacity.');
+ });
+ STATE.water=Math.max(55,STATE.water-0.002+(Math.random()-0.5)*0.05);
+ const L=totalLoad();
+ STATE.history.push(L); if(STATE.history.length>60)STATE.history.shift();
+ // KPIs
+ document.getElementById('kLoad').innerHTML=fmt(L)+'<small> MW</small>';
+ document.getElementById('kLoadT').textContent='▲ demand rising · ambient '+fmt(STATE.ambient,0)+'°C';
+ const online=FEEDERS.filter(f=>f.status!=='TRIP').length;
  document.getElementById('kFeed').innerHTML=online+'<small> / 8</small>';
- const ft=document.getElementById('kFeedT');
- ft.textContent=online<8?'F7 Ambamata isolated':'all healthy';
- ft.style.color=online<8?'var(--red)':'var(--green)';
+ document.getElementById('kFeedT').textContent=online<8?'F7 Ambamata isolated':'all healthy';
+ document.getElementById('kFeedT').style.color=online<8?'var(--red)':'var(--green)';
  document.getElementById('kRisk').textContent='HIGH';
- document.getElementById('kWater').innerHTML=fmt(S.water,0)+'<small> %</small>';
- document.getElementById('kWaterT').textContent='summer draw · pumps 11% of load';
- renderAlarms();drawMimic();drawChart();
+ document.getElementById('kWater').innerHTML=fmt(STATE.water,0)+'<small> %</small>';
+ document.getElementById('kWaterT').textContent='▼ '+fmt(Math.abs(STATE.waterTrend)*24,1)+'%/day · summer draw';
+ drawMimic();drawChart();
 }
+
+/* ---- mimic single-line diagram ---- */
 function drawMimic(){
- const s=document.getElementById('mimicSvg');
+ const s=document.getElementById('mimicSvg');const W=980;
  const col={OK:'var(--green)',WARN:'var(--amber)',CRIT:'var(--red)',TRIP:'var(--red)'};
  let g=`<rect x="20" y="55" width="90" height="40" rx="4" fill="none" stroke="var(--cyan)" stroke-width="1.5"/>
  <text x="65" y="72" text-anchor="middle" class="node-lbl">132kV GSS</text>
  <text x="65" y="86" text-anchor="middle" class="node-val">MADRI</text>
  <line x1="110" y1="75" x2="150" y2="75" stroke="var(--cyan)" stroke-width="2" class="flow"/>
  <line x1="150" y1="15" x2="150" y2="135" stroke="var(--txt)" stroke-width="3"/>`;
- S.feeders.forEach((f,i)=>{
-  const x=190+i*98,y=75,on=f.status!=='TRIP';
+ FEEDERS.forEach((f,i)=>{
+  const x=190+i*98,y=75;
+  const on=f.status!=='TRIP';
   g+=`<line x1="150" y1="${y}" x2="${x}" y2="${y}" stroke="${on?col[f.status]:'var(--faint)'}" stroke-width="1.5" ${on?'class="flow"':''} opacity="${on?1:.5}"/>
   <circle cx="${x}" cy="${y}" r="14" fill="var(--panel2)" stroke="${col[f.status]}" stroke-width="2"/>
   <text x="${x}" y="${y+4}" text-anchor="middle" class="node-val" fill="${col[f.status]}">${f.id}</text>
@@ -176,50 +218,108 @@ function drawMimic(){
  });
  s.innerHTML=g;
 }
+
+/* ---- chart with forecast ---- */
 function drawChart(){
  const cv=document.getElementById('chart');const ctx=cv.getContext('2d');
  const r=cv.getBoundingClientRect();cv.width=r.width*2;cv.height=r.height*2;ctx.scale(2,2);
- const W=r.width,H=r.height,h=S.history,fc=S.forecast;if(h.length<2)return;
+ const W=r.width,H=r.height,h=STATE.history;if(h.length<2)return;
+ const fc=[];let last=h[h.length-1];
+ for(let i=1;i<=15;i++)fc.push(last+i*0.28+Math.sin(i/3)*0.4); // AI forecast: rising evening peak
  const all=h.concat(fc),min=Math.min(...all)-2,max=Math.max(...all)+2;
  const X=i=>i/(all.length-1)*W, Y=v=>H-(v-min)/(max-min)*(H-16)-8;
  ctx.clearRect(0,0,W,H);
  ctx.strokeStyle='rgba(124,141,163,.12)';ctx.lineWidth=1;
  for(let i=1;i<5;i++){ctx.beginPath();ctx.moveTo(0,H/5*i);ctx.lineTo(W,H/5*i);ctx.stroke()}
+ // history
  ctx.strokeStyle='#2ED3BE';ctx.lineWidth=2;ctx.beginPath();
  h.forEach((v,i)=>{i?ctx.lineTo(X(i),Y(v)):ctx.moveTo(X(0),Y(v))});ctx.stroke();
+ // forecast dashed
  ctx.strokeStyle='#FFB020';ctx.setLineDash([5,4]);ctx.beginPath();ctx.moveTo(X(h.length-1),Y(h[h.length-1]));
  fc.forEach((v,i)=>ctx.lineTo(X(h.length+i),Y(v)));ctx.stroke();ctx.setLineDash([]);
- ctx.strokeStyle='rgba(255,77,94,.5)';ctx.setLineDash([2,4]);ctx.beginPath();ctx.moveTo(0,Y(S.n1_limit));ctx.lineTo(W,Y(S.n1_limit));ctx.stroke();ctx.setLineDash([]);
- ctx.fillStyle='#FF4D5E';ctx.font='10px IBM Plex Mono';ctx.fillText('N-1 SECURE LIMIT '+S.n1_limit+' MW',6,Y(S.n1_limit)-5);
+ // capacity line
+ ctx.strokeStyle='rgba(255,77,94,.5)';ctx.setLineDash([2,4]);ctx.beginPath();ctx.moveTo(0,Y(112));ctx.lineTo(W,Y(112));ctx.stroke();ctx.setLineDash([]);
+ ctx.fillStyle='#FF4D5E';ctx.font='10px IBM Plex Mono';ctx.fillText('N-1 SECURE LIMIT 112 MW',6,Y(112)-5);
  ctx.fillStyle='#FFB020';ctx.fillText('AI FORECAST →',X(h.length)+4,14);
 }
-async function poll(){
- try{const r=await fetch('/api/state');S=await r.json();render()}
- catch(e){document.getElementById('kLoadT').textContent='connection lost — retrying'}
+
+/* ============ COPILOT ENGINE ============ */
+/* On-device rule/RAG engine computes answers from LIVE sim state — in production this is
+   Gemini on Vertex AI + BigQuery + Vertex AI Search (RAG). Optional live Gemini mode below. */
+let GEMINI_KEY=null;
+function stateSummary(){
+ return 'City load '+fmt(totalLoad())+' MW, ambient '+STATE.ambient+'°C heatwave. Feeders: '+FEEDERS.map(f=>`${f.id} ${f.name} ${f.status} load ${fmt(f.load)}/${f.cap}MW temp ${fmt(f.temp,0)}C`).join('; ')+'. Reservoir '+fmt(STATE.water,0)+'% falling. F7 trip history: '+STATE.f7Trips.map(t=>t.when+' '+t.cause).join(' | ');
 }
-/* ---- copilot ---- */
+function localAnswer(q){
+ q=q.toLowerCase();
+ const f4=FEEDERS[3],f7=FEEDERS[6];
+ if(q.includes('feeder 7')||q.includes('f7')||q.includes('trip')){
+  return {a:`<b>Feeder 7 (Ambamata) — trip analysis.</b> It has tripped <em>3 times in 4 days</em>:<br><br>`+STATE.f7Trips.map(t=>`• <b>${t.when}</b> — ${t.cause} <span style="color:var(--faint)">(${t.dur})</span>`).join('<br>')+`<br><br>Pattern: the first two were <em>over-current during the 17:00–19:00 evening peak</em>, today's is an <em>earth fault</em> on the same span (P-114→P-117). Correlating the three, the AI assessment is <b>progressive cable insulation failure</b> accelerated by peak-hour thermal stress — not a load problem alone.<div class="reco">Isolate span P-114→P-117 and megger-test before any re-energisation (per SOP-EL-09). Backfeed Ambamata's ~9 MW via F5 Hiranmagri ring main — F5 has ${fmt(FEEDERS[4].cap-FEEDERS[4].load)} MW headroom. Schedule cable replacement within 48h, before Saturday's forecast 45°C peak.</div>`,src:'Sources: SCADA event log · relay disturbance records · SOP-EL-09 (RAG) · load-flow headroom calc'};
+ }
+ if(q.includes('overload')||q.includes('risk')||q.includes('heatwave')||q.includes('tomorrow')||q.includes('transformer')){
+  return {a:`<b>Overload risk ranking for the next 24h</b> (heatwave-adjusted forecast, ambient ${STATE.ambient}°C → 45°C tomorrow):<br><br>1. <b>XFMR T-4 · Sukher Industrial</b> — <em>CRITICAL</em>. Oil temp ${fmt(f4.temp,0)}°C and climbing, loaded at ${fmt(f4.load/f4.cap*100,0)}% of capacity. Cooling degradation suspected (temp rising faster than load). Failure probability within 24h: <em>high</em>.<br>2. <b>F5 Hiranmagri</b> — elevated, if it backfeeds F7's load during evening peak.<br>3. <b>F2 Fatehpura</b> — moderate, domestic AC load peaks 18:00–22:00.<br><br>City-level: forecast evening peak <em>~${fmt(totalLoad()+9,0)} MW vs N-1 secure limit 112 MW</em> — margin is thin if T-4 is lost.<div class="reco">Immediately: verify T-4 cooling fans (SOP-TR-03) and shed 20% of Sukher industrial load via demand-response contracts 17:00–20:00. Pre-position the mobile transformer at Sukher GSS tonight. This converts a potential 6-hour blackout into a zero-outage event.</div>`,src:'Sources: transformer health model · weather-coupled load forecast (Vertex AI) · SOP-TR-03 (RAG)'};
+ }
+ if(q.includes('water')||q.includes('reservoir')){
+  return {a:`<b>Water system status.</b> Reservoir at <em>${fmt(STATE.water,0)}%</em>, falling ~${fmt(Math.abs(STATE.waterTrend)*24,1)}%/day under summer draw. At this rate it crosses the 50% action threshold in <em>~${fmt((STATE.water-50)/(Math.abs(STATE.waterTrend)*24),0)} days</em>. Pumping stations are also your 2nd-largest grid load (≈11% of city MW) — coordinated pump scheduling off the evening peak would relieve both systems.<div class="reco">Shift 60% of pumping to 23:00–06:00 window (saves ~4 MW at peak), activate Fateh Sagar secondary intake per SOP-WS-02, and push a conservation advisory through the citizen app now rather than at 50%.</div>`,src:'Sources: reservoir telemetry · pump load profile · SOP-WS-02 (RAG)'};
+ }
+ if(q.includes('procedure')||q.includes('sop')||q.includes('earth fault')){
+  return {a:`<b>Relevant SOP retrieved (RAG):</b><br><br><em>Earth fault (E/F)</em> — ${SOP['E/F']}<br><br><em>Over-current (O/C)</em> — ${SOP['O/C']}`,src:'Sources: O&M Manual Rev-7 · Discom Safety Code — retrieved via document search'};
+ }
+ if(q.includes('report')||q.includes('incident')){
+  const rpt=`INCIDENT REPORT — AUTO-DRAFTED BY GRID SENTINEL\nDate: ${new Date().toLocaleDateString('en-IN')}  Grid: Udaipur Smart Utility\n\n1. EVENT: Feeder F7 (Ambamata) earth-fault trip at 12:14; third trip in 4 days.\n2. ROOT CAUSE (AI-correlated): Progressive cable insulation failure, span P-114→P-117, accelerated by peak thermal stress. Prior O/C trips 29 Jun & 01 Jul were precursors.\n3. IMPACT: ~9 MW / est. 14,000 consumers; backfeed via F5 restored 78% within 31 min.\n4. CONCURRENT RISK: XFMR T-4 Sukher oil temp trending to critical; mitigation in progress.\n5. ACTIONS: PTW issued, megger test scheduled, cable replacement within 48h, mobile XFMR pre-positioned, demand response activated 17:00-20:00.\n6. RECOMMENDATION: Add span P-114→P-117 class of 1980s PILC cable to predictive replacement program; 11 similar spans identified city-wide.\n\nDrafted by: Control Room Copilot · Reviewed by: ____________`;
+  const blob=new Blob([rpt],{type:'text/plain'});const url=URL.createObjectURL(blob);
+  return {a:`<b>Incident report drafted.</b> Root cause, impact, restoration timeline and recommendations are pre-filled from live SCADA data and the AI correlation above — the shift engineer only reviews and signs.<br><br><a class="dl" href="${url}" download="incident_report_F7.txt">⬇ Download incident_report_F7.txt</a><div class="reco">In production, an ADK agent files this automatically to the discom's system and notifies the AE + SE on WhatsApp/email via Cloud Functions.</div>`,src:'Generated from: SCADA event log · restoration timeline · asset register'};
+ }
+ if(q.includes('compare')||q.includes('headroom')||q.includes('loading')){
+  const rows=FEEDERS.map(f=>{const pct=f.cap?f.load/f.cap*100:0;const hr=f.cap-f.load;
+   return `• <b>${f.id}</b> ${f.name.split('·')[1].trim()} — ${f.status==='TRIP'?'<em>TRIPPED</em>':fmt(f.load)+' / '+f.cap+' MW ('+fmt(pct,0)+'%)'} · headroom ${f.status==='TRIP'?'—':fmt(hr)+' MW'} · ${fmt(f.temp,0)}°C`}).join('<br>');
+  const best=FEEDERS.filter(f=>f.status==='OK').sort((a,b)=>(b.cap-b.load)-(a.cap-a.load))[0];
+  return {a:`<b>Feeder comparison — live loading &amp; headroom:</b><br><br>${rows}<br><br>Most headroom right now: <b>${best.id} ${best.name.split('·')[1].trim()}</b> with <em>${fmt(best.cap-best.load)} MW</em> spare — the best candidate for backfeeding F7's load. Most stressed: <b>F4 Sukher</b>, running hot at <em>${fmt(FEEDERS[3].temp,0)}°C</em>.<div class="reco">Rebalance: shift ~2 MW of Sukher industrial load to F8 Bhuwana via the 11kV tie, and reserve F5's headroom for the F7 backfeed until the cable repair completes.</div>`,src:'Sources: live SCADA loading · network topology · load-flow headroom calc'};
+ }
+ if(q.includes('citizen')||q.includes('consumer')||q.includes('impact')||q.includes('people')){
+  return {a:`<b>Citizen impact assessment — current situation:</b><br><br>• <b>F7 Ambamata trip:</b> ~<em>14,000 consumers</em> affected at 12:14; backfeed via F5 restored <em>78% within 31 min</em>. Still dark: ~3,100 consumers on the faulted span, including <em>1 hospital feeder (Aravali Hospital)</em> — currently on DG backup, ~6h fuel autonomy.<br>• <b>If T-4 Sukher fails uncontrolled:</b> ~<em>22,000 consumers + the industrial estate</em> face a 4–6 hour outage during a 45°C heatwave — a public-health-grade event (heat stress, water pumping loss in 3 wards).<br>• <b>Water:</b> at current reservoir trend, low-pressure complaints expected in elevated colonies within ~5 days.<div class="reco">Priority order: 1) restore Aravali Hospital span first during cable repair, 2) execute the T-4 mitigation plan today to protect 22,000 consumers, 3) push a proactive SMS/city-app advisory to the affected wards — informed citizens file 60% fewer complaint calls, freeing the control room during the event.</div>`,src:'Sources: consumer indexing DB · critical-load register · outage management system'};
+ }
+ if(q.includes('energy')||q.includes('saving')||q.includes('efficien')||q.includes('loss')){
+  return {a:`<b>Top energy-saving opportunities identified by the AI (city level):</b><br><br>1. <b>Pump-load shifting</b> — moving 60% of water pumping to 23:00–06:00 saves ~<em>4 MW at evening peak</em> and cuts pumping energy cost ~12% via ToD tariff.<br>2. <b>Feeder loss reduction</b> — F2 Fatehpura shows technical losses <em>~2.1% above</em> comparable feeders; load-flow suggests capacitor bank switching + phase rebalancing → est. <em>0.9 MWh/day</em> recovered.<br>3. <b>Transformer fleet</b> — T-4's cooling fault, if fixed, restores efficient operation; fleet-wide, 3 more transformers show early thermal drift worth inspection.<br>4. <b>Streetlight dimming window</b> — 30% dim 01:00–04:30 on smart LED circuits ≈ <em>0.6 MW</em> avg reduction.<br><br>Combined: roughly <em>6–7% peak reduction</em> available with zero new generation — the cheapest megawatts are the ones you don't use.<div class="reco">Start with pump shifting tonight (pure scheduling, no capex), then commission the F2 capacitor switching this week.</div>`,src:'Sources: ToD tariff model · loss analytics (BigQuery) · transformer health model'};
+ }
+ if(q.includes('shift')||q.includes('brief')||q.includes('watch')||q.includes('night')||q.includes('summary')){
+  return {a:`<b>Shift briefing — auto-generated ${now()}:</b><br><br><em>Open items:</em><br>• F7 Ambamata isolated (earth fault, span P-114→P-117) — PTW active, megger test pending. Do NOT re-energise. Backfeed via F5 in service.<br>• XFMR T-4 Sukher at ${fmt(FEEDERS[3].temp,0)}°C and rising — check cooling fans hourly, shed 20% industrial load 17:00–20:00, trip threshold 85°C.<br><br><em>Watch tonight:</em><br>• Evening peak forecast near the 112 MW N-1 limit — keep F5 headroom reserved.<br>• Heatwave tomorrow (45°C): expect +8.5% demand; mobile transformer being pre-positioned at Sukher.<br>• Reservoir ${fmt(STATE.water,0)}% — night pumping window 23:00–06:00 is active, confirm P-2 duty cycle normalises.<br><br><em>All other feeders healthy.</em> Escalation: AE on call — auto-notify is armed for T-4 &gt;80°C.<div class="reco">Acknowledge this briefing to log shift handover. In production, the ADK agent emails this to the incoming shift engineer automatically at every handover.</div>`,src:'Generated from: live SCADA state · open work permits · forecast model · duty roster'};
+ }
+ return {a:`I'm watching the whole grid in real time. Try asking about the <b>Feeder 7 trips</b>, <b>tomorrow's overload risk</b>, <b>comparing feeder loading</b>, <b>citizen impact</b>, <b>energy savings</b>, a <b>shift briefing</b>, the <b>water reservoir</b>, an <b>SOP/procedure</b>, or ask me to <b>draft the incident report</b>. In the full build (Gemini on Vertex AI + BigQuery), any free-form question over years of grid data is answerable.`,src:'On-device demo engine · production: Gemini 2.x on Vertex AI'};
+}
+async function geminiAnswer(q){
+ const body={contents:[{parts:[{text:'You are GRID SENTINEL, an AI copilot for a city utility control room in Udaipur. Answer the operator concisely with specific numbers and a recommended action. Live grid state: '+stateSummary()+'\n\nOperator question: '+q}]}]};
+ const r=await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key='+GEMINI_KEY,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+ const d=await r.json();
+ return {a:(d.candidates?.[0]?.content?.parts?.[0]?.text||'No response').replace(/\n/g,'<br>'),src:'Live Gemini API · grounded on real-time grid state'};
+}
 function addMsg(html,cls){const c=document.getElementById('chat');const d=document.createElement('div');d.className='msg '+cls;d.innerHTML=html;c.appendChild(d);c.scrollTop=c.scrollHeight;return d}
 async function ask(preset){
  const inp=document.getElementById('q');const q=preset||inp.value.trim();if(!q)return;inp.value='';
  addMsg(q,'user');
  const t=addMsg('<span class="typing"><i></i><i></i><i></i></span>','bot');
- try{
-  const r=await fetch('/api/ask',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({q})});
-  const ans=await r.json();
-  t.innerHTML=ans.a+'<div class="src">'+ans.src+'</div>';
- }catch(e){t.innerHTML='Server unreachable — is app.py running?'}
+ await new Promise(r=>setTimeout(r,700+Math.random()*600));
+ let ans;
+ try{ans=GEMINI_KEY?await geminiAnswer(q):localAnswer(q)}catch(e){ans=localAnswer(q);ans.src+=' · (Gemini call failed, fell back to demo engine)'}
+ t.innerHTML=ans.a+'<div class="src">'+ans.src+'</div>';
  document.getElementById('chat').scrollTop=1e9;
 }
 document.getElementById('q').addEventListener('keydown',e=>{if(e.key==='Enter')ask()});
-const CHIPS=['Why did Feeder 7 trip?','Overload risk tomorrow?','Compare feeder loading','Water reservoir outlook','Show earth-fault SOP','Draft incident report'];
+document.getElementById('modeTag').onclick=()=>{const r=document.getElementById('apiRow');r.style.display=r.style.display==='flex'?'none':'flex'};
+function saveKey(){const k=document.getElementById('apiKey').value.trim();if(k){GEMINI_KEY=k;document.getElementById('modeTag').textContent='MODE: LIVE GEMINI';document.getElementById('apiRow').style.display='none'}}
+const CHIPS=['Why did Feeder 7 trip?','Overload risk tomorrow?','Compare feeder loading','Citizen impact now?','Energy saving options','Night shift briefing','Water reservoir outlook','Show earth-fault SOP','Draft incident report'];
 document.getElementById('chips').innerHTML=CHIPS.map(c=>`<div class="chip" onclick="ask('${c}')">${c}</div>`).join('');
-const mt=document.getElementById('modeTag');
-mt.textContent='MODE: SERVER (set GEMINI_API_KEY for live AI)';mt.style.cursor='default';
-document.getElementById('apiRow').style.display='none';
+
+/* ---- boot ---- */
 setInterval(()=>document.getElementById('clock').textContent=new Date().toLocaleString('en-IN',{hour12:false}),1000);
-addMsg(`<b>Grid Sentinel online (server mode).</b> Monitoring 8 feeders, 1 GSS and the city water system via the live API. Two situations need attention: <em>Feeder 7 tripped (3rd in 4 days)</em> and <em>XFMR T-4 overheating</em>. Ask me anything.`,'bot');
-poll();setInterval(poll,2000);
-window.addEventListener('resize',()=>S&&drawChart());
+pushAlarm('crit','Feeder 7 · Ambamata','Earth-fault trip at 12:14. Breaker open. 3rd trip in 4 days — AI flags pattern.');
+pushAlarm('warn','XFMR T-4 · Sukher','Oil temperature 74°C, rising trend detected — faster than load growth (cooling issue?).');
+pushAlarm('info','Weather Service','Heatwave alert: 45°C forecast tomorrow. Load forecast auto-adjusted +8.5%.');
+pushAlarm('info','Water SCADA','Reservoir 68% — pump station P-2 duty cycle elevated.');
+for(let i=0;i<40;i++){FEEDERS.forEach(f=>{if(f.status!=='TRIP')f.load=Math.max(4,f.load+(Math.random()-.5)*.4)});STATE.history.push(totalLoad())}
+tick();setInterval(tick,2000);
+addMsg(`<b>Grid Sentinel online.</b> I'm monitoring 8 feeders, 1 GSS, and the city water system. Two situations need your attention right now: <em>Feeder 7 has tripped (3rd time in 4 days)</em> and <em>transformer T-4 at Sukher is overheating</em>. Ask me anything, or tap a suggestion below.`,'bot');
+window.addEventListener('resize',drawChart);
 </script>
 </body>
 </html>
