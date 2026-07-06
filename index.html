@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GRID SENTINEL — Control Room Copilot | Pyrotech</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#0A1018; --panel:#101825; --panel2:#0D1420; --line:#1E2B3D;
+  --txt:#D7E2EE; --dim:#7C8DA3; --faint:#4A5A6E;
+  --amber:#FFB020; --cyan:#2ED3BE; --red:#FF4D5E; --blue:#4C8DFF; --green:#3DDC84;
+  --disp:'Chakra Petch',sans-serif; --mono:'IBM Plex Mono',monospace; --body:'IBM Plex Sans',sans-serif;
+}
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:var(--bg);color:var(--txt);font-family:var(--body);font-size:14px;overflow-x:hidden}
+::-webkit-scrollbar{width:8px;height:8px}::-webkit-scrollbar-thumb{background:var(--line);border-radius:4px}
+header{display:flex;align-items:center;gap:16px;padding:14px 22px;border-bottom:1px solid var(--line);background:var(--panel2)}
+.logo{font-family:var(--disp);font-weight:700;font-size:20px;letter-spacing:2px}
+.logo span{color:var(--cyan)}
+.sub{font-size:11px;color:var(--dim);letter-spacing:1px;text-transform:uppercase}
+.hdr-right{margin-left:auto;display:flex;align-items:center;gap:20px;font-family:var(--mono);font-size:12px;color:var(--dim)}
+.live-dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--green);margin-right:6px;animation:pulse 1.6s infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
+.grid{display:grid;grid-template-columns:1fr 1fr 420px;grid-template-rows:auto auto 1fr;gap:12px;padding:12px 16px;height:calc(100vh - 61px)}
+.kpis{grid-column:1/3;display:grid;grid-template-columns:repeat(5,1fr);gap:12px}
+.kpi{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:12px 16px}
+.kpi .lbl{font-size:10px;letter-spacing:1.5px;text-transform:uppercase;color:var(--dim);margin-bottom:6px}
+.kpi .val{font-family:var(--disp);font-size:26px;font-weight:600}
+.kpi .val small{font-size:13px;color:var(--dim);font-weight:500}
+.kpi .trend{font-family:var(--mono);font-size:11px;margin-top:2px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:14px 16px;overflow:hidden;display:flex;flex-direction:column;min-height:0}
+.card h3{font-family:var(--disp);font-size:13px;font-weight:600;letter-spacing:1.5px;text-transform:uppercase;color:var(--dim);margin-bottom:10px;display:flex;align-items:center;gap:8px}
+.card h3 .tag{margin-left:auto;font-family:var(--mono);font-size:10px;color:var(--faint);letter-spacing:0}
+#mimic{grid-column:1/3}
+#mimic svg{width:100%;height:150px}
+.flow{stroke-dasharray:6 6;animation:flow 1s linear infinite}
+@keyframes flow{to{stroke-dashoffset:-12}}
+.node-lbl{font-family:var(--mono);font-size:9.5px;fill:var(--dim)}
+.node-val{font-family:var(--disp);font-size:11px;font-weight:600;fill:var(--txt)}
+#chartCard{grid-column:1;grid-row:3}
+#alarmCard{grid-column:2;grid-row:3}
+canvas{width:100%;height:100%}
+.alarm{display:flex;gap:10px;padding:8px 10px;border-radius:6px;margin-bottom:6px;font-size:12.5px;background:var(--panel2);border-left:3px solid var(--dim);animation:slidein .3s ease}
+@keyframes slidein{from{opacity:0;transform:translateY(-6px)}to{opacity:1}}
+.alarm.crit{border-left-color:var(--red)}
+.alarm.warn{border-left-color:var(--amber)}
+.alarm.info{border-left-color:var(--blue)}
+.alarm .t{font-family:var(--mono);font-size:10.5px;color:var(--faint);white-space:nowrap;padding-top:1px}
+.alarm .sev{font-family:var(--mono);font-size:10px;font-weight:500;padding:1px 6px;border-radius:3px;height:fit-content}
+.alarm.crit .sev{background:rgba(255,77,94,.15);color:var(--red)}
+.alarm.warn .sev{background:rgba(255,176,32,.15);color:var(--amber)}
+.alarm.info .sev{background:rgba(76,141,255,.15);color:var(--blue)}
+#alarmList{overflow-y:auto;flex:1}
+#copilot{grid-column:3;grid-row:1/4;display:flex;flex-direction:column}
+#chat{flex:1;overflow-y:auto;padding:4px 2px;min-height:0}
+.msg{margin-bottom:12px;max-width:95%;line-height:1.5;font-size:13px}
+.msg.user{margin-left:auto;background:#16283F;border:1px solid #23405F;border-radius:10px 10px 2px 10px;padding:9px 12px}
+.msg.bot{background:var(--panel2);border:1px solid var(--line);border-radius:10px 10px 10px 2px;padding:10px 13px}
+.msg.bot .src{font-family:var(--mono);font-size:10px;color:var(--faint);margin-top:8px;border-top:1px dashed var(--line);padding-top:6px}
+.msg.bot b{color:var(--cyan);font-weight:600}
+.msg.bot em{color:var(--amber);font-style:normal}
+.reco{background:rgba(46,211,190,.06);border:1px solid rgba(46,211,190,.25);border-radius:6px;padding:8px 10px;margin-top:8px;font-size:12.5px}
+.reco::before{content:'▸ RECOMMENDED ACTION';display:block;font-family:var(--mono);font-size:9.5px;letter-spacing:1px;color:var(--cyan);margin-bottom:4px}
+.chips{display:flex;flex-wrap:wrap;gap:6px;padding:10px 0 8px}
+.chip{font-size:11.5px;padding:5px 10px;border:1px solid var(--line);border-radius:20px;background:var(--panel2);color:var(--dim);cursor:pointer;transition:.15s}
+.chip:hover{border-color:var(--cyan);color:var(--cyan)}
+.inrow{display:flex;gap:8px}
+#q{flex:1;background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:10px 12px;color:var(--txt);font-family:var(--body);font-size:13px;outline:none}
+#q:focus{border-color:var(--cyan)}
+#send{background:var(--cyan);color:#04211C;border:none;border-radius:8px;padding:0 16px;font-family:var(--disp);font-weight:600;font-size:13px;cursor:pointer;letter-spacing:.5px}
+#send:hover{filter:brightness(1.1)}
+.typing{display:inline-block}.typing i{display:inline-block;width:5px;height:5px;border-radius:50%;background:var(--dim);margin:0 1.5px;animation:tp 1s infinite;font-style:normal}
+.typing i:nth-child(2){animation-delay:.15s}.typing i:nth-child(3){animation-delay:.3s}
+@keyframes tp{0%,100%{opacity:.25;transform:translateY(0)}50%{opacity:1;transform:translateY(-3px)}}
+.mode{font-family:var(--mono);font-size:10px;color:var(--faint);cursor:pointer;text-decoration:underline dotted}
+#apiRow{display:none;gap:6px;margin-bottom:8px}
+#apiRow input{flex:1;background:var(--panel2);border:1px solid var(--line);border-radius:6px;padding:6px 10px;color:var(--txt);font-family:var(--mono);font-size:11px}
+.dl{color:var(--cyan);cursor:pointer;text-decoration:underline}
+@media(max-width:1100px){.grid{grid-template-columns:1fr;grid-template-rows:auto;height:auto}.kpis{grid-column:1;grid-template-columns:repeat(2,1fr)}#mimic,#chartCard,#alarmCard,#copilot{grid-column:1;grid-row:auto}#copilot{height:600px}#alarmCard{height:340px}#chartCard{height:300px}}
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <div class="logo">GRID<span>SENTINEL</span></div>
+    <div class="sub">Control Room Copilot · Pyrotech Electronics Unit-2</div>
+  </div>
+  <div class="hdr-right">
+    <div><span class="live-dot"></span>LIVE · UDAIPUR SMART UTILITY GRID</div>
+    <div id="clock">--:--:--</div>
+  </div>
+</header>
+
+<div class="grid">
+  <div class="kpis">
+    <div class="kpi"><div class="lbl">City Load</div><div class="val" id="kLoad">—<small> MW</small></div><div class="trend" id="kLoadT" style="color:var(--amber)"></div></div>
+    <div class="kpi"><div class="lbl">Feeders Online</div><div class="val" id="kFeed">—<small> / 8</small></div><div class="trend" id="kFeedT"></div></div>
+    <div class="kpi"><div class="lbl">Active Alarms</div><div class="val" id="kAlarm" style="color:var(--amber)">0</div><div class="trend" id="kAlarmT"></div></div>
+    <div class="kpi"><div class="lbl">Peak Risk (24h)</div><div class="val" id="kRisk" style="color:var(--red)">—</div><div class="trend">AI forecast · heatwave adj.</div></div>
+    <div class="kpi"><div class="lbl">Water Reservoir</div><div class="val" id="kWater">—<small> %</small></div><div class="trend" id="kWaterT" style="color:var(--cyan)"></div></div>
+  </div>
+
+  <div class="card" id="mimic">
+    <h3>Grid Mimic — 132kV GSS Madri → City Feeders <span class="tag">SINGLE-LINE DIAGRAM · AUTO-REFRESH 2s</span></h3>
+    <svg viewBox="0 0 980 150" id="mimicSvg"></svg>
+  </div>
+
+  <div class="card" id="chartCard">
+    <h3>Load Telemetry &amp; AI Forecast <span class="tag">MW · 60-MIN WINDOW + 15-MIN AHEAD</span></h3>
+    <div style="flex:1;min-height:0"><canvas id="chart"></canvas></div>
+  </div>
+
+  <div class="card" id="alarmCard">
+    <h3>Alarm Stream <span class="tag" id="alarmCount">0 EVENTS</span></h3>
+    <div id="alarmList"></div>
+  </div>
+
+  <div class="card" id="copilot">
+    <h3>⬢ Copilot — Ask the Grid <span class="tag mode" id="modeTag" title="Click to configure Gemini API">MODE: ON-DEVICE AI (DEMO)</span></h3>
+    <div id="apiRow"><input id="apiKey" type="password" placeholder="Paste Gemini API key (optional — enables live Vertex/Gemini answers)"><button id="send" style="padding:0 12px" onclick="saveKey()">Set</button></div>
+    <div id="chat"></div>
+    <div class="chips" id="chips"></div>
+    <div class="inrow">
+      <input id="q" placeholder="Ask anything… e.g. Why did Feeder 7 trip?" autocomplete="off">
+      <button id="send" onclick="ask()">ASK</button>
+    </div>
+  </div>
+</div>
+
+<script>
+/* ============ SERVER-DRIVEN FRONTEND ============ */
+/* State comes from GET /api/state (Flask -> simulator; production: BigQuery). */
+let S=null;
+function fmt(n,d=1){return Number(n).toFixed(d)}
+function renderAlarms(){
+ const el=document.getElementById('alarmList');
+ el.innerHTML=S.alarms.map(a=>`<div class="alarm ${a.sev}"><span class="t">${a.t}</span><span class="sev">${a.sev.toUpperCase()}</span><span><b style="color:var(--txt)">${a.src}</b> — ${a.text}</span></div>`).join('');
+ document.getElementById('alarmCount').textContent=S.alarms.length+' EVENTS';
+ document.getElementById('kAlarm').textContent=S.alarms.filter(a=>a.sev!=='info').length;
+ const c=S.alarms.filter(a=>a.sev==='crit').length;
+ const t=document.getElementById('kAlarmT');
+ t.textContent=c?c+' critical':'no critical'; t.style.color=c?'var(--red)':'var(--green)';
+}
+function render(){
+ if(!S)return;
+ document.getElementById('kLoad').innerHTML=fmt(S.total_load)+'<small> MW</small>';
+ document.getElementById('kLoadT').textContent='▲ demand rising · ambient '+S.ambient+'°C';
+ const online=S.feeders.filter(f=>f.status!=='TRIP').length;
+ document.getElementById('kFeed').innerHTML=online+'<small> / 8</small>';
+ const ft=document.getElementById('kFeedT');
+ ft.textContent=online<8?'F7 Ambamata isolated':'all healthy';
+ ft.style.color=online<8?'var(--red)':'var(--green)';
+ document.getElementById('kRisk').textContent='HIGH';
+ document.getElementById('kWater').innerHTML=fmt(S.water,0)+'<small> %</small>';
+ document.getElementById('kWaterT').textContent='summer draw · pumps 11% of load';
+ renderAlarms();drawMimic();drawChart();
+}
+function drawMimic(){
+ const s=document.getElementById('mimicSvg');
+ const col={OK:'var(--green)',WARN:'var(--amber)',CRIT:'var(--red)',TRIP:'var(--red)'};
+ let g=`<rect x="20" y="55" width="90" height="40" rx="4" fill="none" stroke="var(--cyan)" stroke-width="1.5"/>
+ <text x="65" y="72" text-anchor="middle" class="node-lbl">132kV GSS</text>
+ <text x="65" y="86" text-anchor="middle" class="node-val">MADRI</text>
+ <line x1="110" y1="75" x2="150" y2="75" stroke="var(--cyan)" stroke-width="2" class="flow"/>
+ <line x1="150" y1="15" x2="150" y2="135" stroke="var(--txt)" stroke-width="3"/>`;
+ S.feeders.forEach((f,i)=>{
+  const x=190+i*98,y=75,on=f.status!=='TRIP';
+  g+=`<line x1="150" y1="${y}" x2="${x}" y2="${y}" stroke="${on?col[f.status]:'var(--faint)'}" stroke-width="1.5" ${on?'class="flow"':''} opacity="${on?1:.5}"/>
+  <circle cx="${x}" cy="${y}" r="14" fill="var(--panel2)" stroke="${col[f.status]}" stroke-width="2"/>
+  <text x="${x}" y="${y+4}" text-anchor="middle" class="node-val" fill="${col[f.status]}">${f.id}</text>
+  <text x="${x}" y="${y-24}" text-anchor="middle" class="node-lbl">${f.name.split('·')[1].trim()}</text>
+  <text x="${x}" y="${y+34}" text-anchor="middle" class="node-lbl" fill="${on?'var(--txt)':'var(--red)'}">${on?fmt(f.load)+' MW':'TRIPPED'}</text>
+  <text x="${x}" y="${y+48}" text-anchor="middle" class="node-lbl" fill="${f.temp>70?'var(--red)':f.temp>60?'var(--amber)':'var(--faint)'}">${fmt(f.temp,0)}°C</text>`;
+ });
+ s.innerHTML=g;
+}
+function drawChart(){
+ const cv=document.getElementById('chart');const ctx=cv.getContext('2d');
+ const r=cv.getBoundingClientRect();cv.width=r.width*2;cv.height=r.height*2;ctx.scale(2,2);
+ const W=r.width,H=r.height,h=S.history,fc=S.forecast;if(h.length<2)return;
+ const all=h.concat(fc),min=Math.min(...all)-2,max=Math.max(...all)+2;
+ const X=i=>i/(all.length-1)*W, Y=v=>H-(v-min)/(max-min)*(H-16)-8;
+ ctx.clearRect(0,0,W,H);
+ ctx.strokeStyle='rgba(124,141,163,.12)';ctx.lineWidth=1;
+ for(let i=1;i<5;i++){ctx.beginPath();ctx.moveTo(0,H/5*i);ctx.lineTo(W,H/5*i);ctx.stroke()}
+ ctx.strokeStyle='#2ED3BE';ctx.lineWidth=2;ctx.beginPath();
+ h.forEach((v,i)=>{i?ctx.lineTo(X(i),Y(v)):ctx.moveTo(X(0),Y(v))});ctx.stroke();
+ ctx.strokeStyle='#FFB020';ctx.setLineDash([5,4]);ctx.beginPath();ctx.moveTo(X(h.length-1),Y(h[h.length-1]));
+ fc.forEach((v,i)=>ctx.lineTo(X(h.length+i),Y(v)));ctx.stroke();ctx.setLineDash([]);
+ ctx.strokeStyle='rgba(255,77,94,.5)';ctx.setLineDash([2,4]);ctx.beginPath();ctx.moveTo(0,Y(S.n1_limit));ctx.lineTo(W,Y(S.n1_limit));ctx.stroke();ctx.setLineDash([]);
+ ctx.fillStyle='#FF4D5E';ctx.font='10px IBM Plex Mono';ctx.fillText('N-1 SECURE LIMIT '+S.n1_limit+' MW',6,Y(S.n1_limit)-5);
+ ctx.fillStyle='#FFB020';ctx.fillText('AI FORECAST →',X(h.length)+4,14);
+}
+async function poll(){
+ try{const r=await fetch('/api/state');S=await r.json();render()}
+ catch(e){document.getElementById('kLoadT').textContent='connection lost — retrying'}
+}
+/* ---- copilot ---- */
+function addMsg(html,cls){const c=document.getElementById('chat');const d=document.createElement('div');d.className='msg '+cls;d.innerHTML=html;c.appendChild(d);c.scrollTop=c.scrollHeight;return d}
+async function ask(preset){
+ const inp=document.getElementById('q');const q=preset||inp.value.trim();if(!q)return;inp.value='';
+ addMsg(q,'user');
+ const t=addMsg('<span class="typing"><i></i><i></i><i></i></span>','bot');
+ try{
+  const r=await fetch('/api/ask',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({q})});
+  const ans=await r.json();
+  t.innerHTML=ans.a+'<div class="src">'+ans.src+'</div>';
+ }catch(e){t.innerHTML='Server unreachable — is app.py running?'}
+ document.getElementById('chat').scrollTop=1e9;
+}
+document.getElementById('q').addEventListener('keydown',e=>{if(e.key==='Enter')ask()});
+const CHIPS=['Why did Feeder 7 trip?','Overload risk tomorrow?','Compare feeder loading','Water reservoir outlook','Show earth-fault SOP','Draft incident report'];
+document.getElementById('chips').innerHTML=CHIPS.map(c=>`<div class="chip" onclick="ask('${c}')">${c}</div>`).join('');
+const mt=document.getElementById('modeTag');
+mt.textContent='MODE: SERVER (set GEMINI_API_KEY for live AI)';mt.style.cursor='default';
+document.getElementById('apiRow').style.display='none';
+setInterval(()=>document.getElementById('clock').textContent=new Date().toLocaleString('en-IN',{hour12:false}),1000);
+addMsg(`<b>Grid Sentinel online (server mode).</b> Monitoring 8 feeders, 1 GSS and the city water system via the live API. Two situations need attention: <em>Feeder 7 tripped (3rd in 4 days)</em> and <em>XFMR T-4 overheating</em>. Ask me anything.`,'bot');
+poll();setInterval(poll,2000);
+window.addEventListener('resize',()=>S&&drawChart());
+</script>
+</body>
+</html>
